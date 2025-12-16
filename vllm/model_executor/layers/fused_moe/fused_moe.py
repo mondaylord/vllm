@@ -1833,19 +1833,31 @@ def fused_experts_impl(
 
     config = get_config_func(M)
 
+    MAX_BLOCK_SIZE_M = config["BLOCK_SIZE_M"]
+
     # We can reuse the memory between these because by the time we need
     # cache3, we're done with cache1
+    # We need to add extra buffer for the padding tokens
+    # defined in moe_align_block_size
+    max_padded_size = M * top_k_num + global_num_experts * MAX_BLOCK_SIZE_M
     cache13 = torch.empty(
-        M * top_k_num * max(N, K),
+        max_padded_size * max(N, K),
         device=hidden_states.device,
         dtype=hidden_states.dtype,
     )
-    intermediate_cache1 = cache13[: M * top_k_num * N].view(M, top_k_num, N)
-    intermediate_cache3 = cache13[: M * top_k_num * K].view(M, top_k_num, K)
+    # intermediate_cache1 is a flattened view of cache13
+    intermediate_cache1 = cache13[: max_padded_size * N].view(
+        -1, N
+    )  # (max_padded_size, N)
+    intermediate_cache3 = cache13[: max_padded_size * K].view(
+        -1, K
+    )  # (max_padded_size, K)
 
     # This needs separate memory since it's used concurrently with cache1
     intermediate_cache2 = torch.empty(
-        (M * top_k_num, N // 2), device=hidden_states.device, dtype=hidden_states.dtype
+        (max_padded_size, N // 2),
+        device=hidden_states.device,
+        dtype=hidden_states.dtype,
     )
 
     if hidden_states.dtype == torch.bfloat16:
@@ -1913,11 +1925,6 @@ def fused_experts_impl(
             # chunk. Note that in most cases we only have one chunk
             # so the cache size and config are already set correctly and
             # do not need to be adjusted.
-            intermediate_cache1 = intermediate_cache1[:tokens_in_chunk]
-            intermediate_cache2 = intermediate_cache2[
-                : tokens_in_chunk * topk_ids.size(1)
-            ]
-            intermediate_cache3 = intermediate_cache3[:tokens_in_chunk]
             config = get_config_func(tokens_in_chunk)
 
         curr_topk_ids = topk_ids[begin_chunk_idx:end_chunk_idx]
@@ -2022,7 +2029,9 @@ def fused_experts_impl(
         )
 
         ops.moe_sum(
-            intermediate_cache3.view(*intermediate_cache3.size()),
+            intermediate_cache3[: tokens_in_chunk * top_k_num].view(
+                tokens_in_chunk, top_k_num, -1
+            ),
             out_hidden_states[begin_chunk_idx:end_chunk_idx],
         )
 
@@ -2064,8 +2073,11 @@ class TritonExperts(mk.FusedMoEPermuteExpertsUnpermute):
         local_num_experts: int,
         expert_tokens_meta: mk.ExpertTokensMetadata | None,
     ) -> tuple[tuple[int, ...], tuple[int, ...], tuple[int, ...]]:
-        workspace1 = (M, topk, max(N // 2, K))
-        workspace2 = (M, topk, max(N, K))
+        # Add buffer for padding tokens
+        SAFE_BLOCK_SIZE_M = 256
+        max_padded_size = M * topk + global_num_experts * SAFE_BLOCK_SIZE_M
+        workspace1 = (max_padded_size, max(N // 2, K))
+        workspace2 = (max_padded_size, max(N, K))
         output = (M, K)
         return (workspace1, workspace2, output)
 

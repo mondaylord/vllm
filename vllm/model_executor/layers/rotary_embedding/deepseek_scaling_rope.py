@@ -121,6 +121,25 @@ class DeepseekScalingRotaryEmbedding(RotaryEmbeddingBase):
             query_pass = query[..., self.rotary_dim :]
             key_pass = key[..., self.rotary_dim :]
 
+        # Dynamic cache resizing
+        max_pos_idx = torch.max(positions + offsets) if offsets is not None else torch.max(positions)
+        if max_pos_idx >= self.cos_sin_cache.size(0):
+            new_max_len = int(max(
+                self.max_position_embeddings * self.scaling_factor,
+                max_pos_idx.item() + 1
+            ))
+            inv_freq = self._compute_inv_freq(self.scaling_factor)
+            t = torch.arange(
+                new_max_len,
+                device=current_platform.device_type,
+                dtype=torch.float32,
+            )
+            freqs = torch.einsum("i,j -> ij", t, inv_freq)
+            cos = freqs.cos() * self.mscale
+            sin = freqs.sin() * self.mscale
+            new_cache = torch.cat((cos, sin), dim=-1)
+            self.cos_sin_cache = new_cache.to(dtype=query.dtype, device=query.device)
+
         cos_sin = self.cos_sin_cache[
             torch.add(positions, offsets) if offsets is not None else positions
         ]

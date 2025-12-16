@@ -621,9 +621,11 @@ def sparse_attn_indexer(
     # assert isinstance(attn_metadata, dict)
     if not isinstance(attn_metadata, dict):
         # Reserve workspace for indexer during profiling run
+        # Align to 128 for DeepGemm block access safety
+        padded_len = (total_seq_lens + 127) // 128 * 128
         current_workspace_manager().get_simultaneous(
-            ((total_seq_lens, head_dim), torch.float8_e4m3fn),
-            ((total_seq_lens, 4), torch.uint8),
+            ((padded_len, head_dim), torch.float8_e4m3fn),
+            ((padded_len, 4), torch.uint8),
         )
 
         return sparse_attn_indexer_fake(
@@ -662,9 +664,11 @@ def sparse_attn_indexer(
 
         # Get the full shared workspace buffers once (will allocate on first use)
         workspace_manager = current_workspace_manager()
+        # Align to 128 for DeepGemm block access safety
+        padded_len = (total_seq_lens + 127) // 128 * 128
         k_fp8_full, k_scale_full = workspace_manager.get_simultaneous(
-            ((total_seq_lens, head_dim), fp8_dtype),
-            ((total_seq_lens, 4), torch.uint8),
+            ((padded_len, head_dim), fp8_dtype),
+            ((padded_len, 4), torch.uint8),
         )
 
         for chunk in prefill_metadata.chunks:
