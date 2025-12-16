@@ -316,6 +316,11 @@ class W8A8BlockFp8LinearOp:
         m = q_input.shape[0]
         pad_m = (m + 127) // 128 * 128
         if pad_m > m:
+            print(f"\n{'='*60}")
+            print(f"[DEEPGEMM PADDING] Original M={m}, Padded M={pad_m}")
+            print(f"[BEFORE] q_input.shape={q_input.shape}, stride={q_input.stride()}")
+            print(f"[BEFORE] input_scale.shape={input_scale.shape}, stride={input_scale.stride()}")
+            
             padded_q_input = torch.zeros(
                 (pad_m, q_input.shape[1]),
                 dtype=q_input.dtype,
@@ -336,16 +341,15 @@ class W8A8BlockFp8LinearOp:
             temp_scale[:, :m] = input_scale.t()
             # Permute to get [pad_m, C] with column-major strides
             padded_input_scale = temp_scale.permute(1, 0)
+            
+            print(f"[AFTER] padded_q_input.shape={padded_q_input.shape}, stride={padded_q_input.stride()}")
+            print(f"[AFTER] padded_input_scale.shape={padded_input_scale.shape}, stride={padded_input_scale.stride()}")
+            print(f"[INFO] weight.shape={weight.shape}, weight_scale.shape={weight_scale.shape}")
+            print(f"{'='*60}\n")
+            
             q_input = padded_q_input
             input_scale = padded_input_scale
 
-        # Debug: print tensor properties
-        print(f"[DEBUG] Before DeepGemm:")
-        print(f"  q_input.shape: {q_input.shape}, stride: {q_input.stride()}")
-        print(f"  input_scale.shape: {input_scale.shape}, stride: {input_scale.stride()}")
-        print(f"  weight.shape: {weight.shape}, stride: {weight.stride()}")
-        print(f"  weight_scale.shape: {weight_scale.shape}, stride: {weight_scale.stride()}")
-        
         output = torch.empty(
             (q_input.shape[0], weight.shape[0]),
             dtype=torch.bfloat16,
