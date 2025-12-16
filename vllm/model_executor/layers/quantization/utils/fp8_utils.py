@@ -315,8 +315,8 @@ class W8A8BlockFp8LinearOp:
             
             # For non-Blackwell E8M0 path, ensure TMA-aligned stride
             if self.use_deep_gemm_e8m0:
-                m = q_input.shape[0]
-                tma_aligned_m = ((m + 3) // 4) * 4
+                m_orig = q_input.shape[0]
+                tma_aligned_m = ((m_orig + 3) // 4) * 4
                 
                 # Check if stride needs fixing
                 expected_stride = (1, tma_aligned_m)
@@ -328,7 +328,7 @@ class W8A8BlockFp8LinearOp:
                         dtype=input_scale.dtype,
                         device=input_scale.device,
                     )
-                    temp_scale[:, :m] = input_scale.t()
+                    temp_scale[:, :m_orig] = input_scale.t()
                     input_scale = temp_scale.permute(1, 0)
         
         # Pad M to 128 to avoid illegal memory access in DeepGemm
