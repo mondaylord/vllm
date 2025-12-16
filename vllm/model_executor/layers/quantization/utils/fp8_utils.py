@@ -339,6 +339,13 @@ class W8A8BlockFp8LinearOp:
             q_input = padded_q_input
             input_scale = padded_input_scale
 
+        # Debug: print tensor properties
+        print(f"[DEBUG] Before DeepGemm:")
+        print(f"  q_input.shape: {q_input.shape}, stride: {q_input.stride()}")
+        print(f"  input_scale.shape: {input_scale.shape}, stride: {input_scale.stride()}")
+        print(f"  weight.shape: {weight.shape}, stride: {weight.stride()}")
+        print(f"  weight_scale.shape: {weight_scale.shape}, stride: {weight_scale.stride()}")
+        
         output = torch.empty(
             (q_input.shape[0], weight.shape[0]),
             dtype=torch.bfloat16,
