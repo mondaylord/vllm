@@ -313,23 +313,25 @@ class W8A8BlockFp8LinearOp:
             assert self.deepgemm_input_quant_op is not None
             q_input, input_scale = self.deepgemm_input_quant_op(input_2d)
             
-            # For non-Blackwell E8M0 path, ensure TMA-aligned stride
+            # For non-Blackwell E8M0 path, transform scale to DeepGemm layout
             if self.use_deep_gemm_e8m0:
-                m_orig = q_input.shape[0]
-                tma_aligned_m = ((m_orig + 3) // 4) * 4
+                from vllm.utils.deep_gemm import transform_sf_into_required_layout
                 
-                # Check if stride needs fixing
-                expected_stride = (1, tma_aligned_m)
-                if input_scale.stride() != expected_stride:
-                    # Recreate tensor with correct stride
-                    c = input_scale.shape[1]
-                    temp_scale = torch.empty(
-                        (c, tma_aligned_m),
-                        dtype=input_scale.dtype,
-                        device=input_scale.device,
-                    )
-                    temp_scale[:, :m_orig] = input_scale.t()
-                    input_scale = temp_scale.permute(1, 0)
+                m_orig = q_input.shape[0]
+                k = q_input.shape[1]
+                
+                # Transform input_scale to DeepGemm required layout
+                # input_scale shape: [M, num_groups_k]
+                # DeepGemm expects specific layout for activation scales (is_sfa=True)
+                recipe = (1, 128, 128)
+                input_scale = transform_sf_into_required_layout(
+                    sf=input_scale.unsqueeze(0),  # Add batch dim
+                    mn=m_orig,
+                    k=k,
+                    recipe=recipe,
+                    num_groups=1,
+                    is_sfa=True,  # This is scale for A (activations)
+                ).squeeze(0)  # Remove batch dim
         
         # Pad M to 128 to avoid illegal memory access in DeepGemm
         m = q_input.shape[0]
