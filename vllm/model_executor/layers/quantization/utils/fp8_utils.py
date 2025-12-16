@@ -323,13 +323,13 @@ class W8A8BlockFp8LinearOp:
             )
             padded_q_input[:m] = q_input
 
-
-            # input_scale shape is [M, C]
-            padded_input_scale = torch.empty(
-                (pad_m, input_scale.shape[1]),
+            # input_scale shape is [M, C], typically Column Major [stride (1, M)]
+            # We must preserve this layout for DeepGemm
+            padded_input_scale = torch.zeros(
+                (input_scale.shape[1], pad_m),
                 dtype=input_scale.dtype,
                 device=input_scale.device,
-            )
+            ).t()
             padded_input_scale[:m] = input_scale
             q_input = padded_q_input
             input_scale = padded_input_scale
@@ -342,6 +342,8 @@ class W8A8BlockFp8LinearOp:
         torch.ops.vllm.fp8_gemm_nt_op(
             q_input, input_scale, weight, weight_scale, output, self.use_deep_gemm_e8m0
         )
+        # Verify DeepGemm execution immediately
+        torch.cuda.synchronize()
         return output[:m]
 
     def _run_cutlass(
