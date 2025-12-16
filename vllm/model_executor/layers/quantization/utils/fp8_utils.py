@@ -312,6 +312,25 @@ class W8A8BlockFp8LinearOp:
         else:
             assert self.deepgemm_input_quant_op is not None
             q_input, input_scale = self.deepgemm_input_quant_op(input_2d)
+            
+            # For non-Blackwell E8M0 path, ensure TMA-aligned stride
+            if self.use_deep_gemm_e8m0:
+                m = q_input.shape[0]
+                tma_aligned_m = ((m + 3) // 4) * 4
+                
+                # Check if stride needs fixing
+                expected_stride = (1, tma_aligned_m)
+                if input_scale.stride() != expected_stride:
+                    # Recreate tensor with correct stride
+                    c = input_scale.shape[1]
+                    temp_scale = torch.empty(
+                        (c, tma_aligned_m),
+                        dtype=input_scale.dtype,
+                        device=input_scale.device,
+                    )
+                    temp_scale[:, :m] = input_scale.t()
+                    input_scale = temp_scale.permute(1, 0)
+        
         # Pad M to 128 to avoid illegal memory access in DeepGemm
         m = q_input.shape[0]
         pad_m = (m + 127) // 128 * 128
@@ -346,14 +365,23 @@ class W8A8BlockFp8LinearOp:
                     # Zero out padding
                     padded_input_scale[m:, k] = 0
             else:
-                # Non-Blackwell: input_scale is float32 with column-major strides
-                # shape: [M, C], stride: (1, M)
+                # Non-Blackwell or non-E8M0: input_scale is float32
                 c = input_scale.shape[1]
-                temp_scale = torch.zeros(
-                    (c, pad_m),
-                    dtype=input_scale.dtype,
-                    device=input_scale.device,
-                )
+                if self.use_deep_gemm_e8m0:
+                    # E8M0 requires TMA-aligned stride
+                    tma_aligned_pad_m = ((pad_m + 3) // 4) * 4
+                    temp_scale = torch.zeros(
+                        (c, tma_aligned_pad_m),
+                        dtype=input_scale.dtype,
+                        device=input_scale.device,
+                    )
+                else:
+                    # Regular column-major
+                    temp_scale = torch.zeros(
+                        (c, pad_m),
+                        dtype=input_scale.dtype,
+                        device=input_scale.device,
+                    )
                 temp_scale[:, :m] = input_scale.t()
                 padded_input_scale = temp_scale.permute(1, 0)
             
@@ -381,6 +409,11 @@ class W8A8BlockFp8LinearOp:
             print(f"[DEBUG] output: shape={output.shape}, dtype={output.dtype}")
             print(f"[DEBUG] use_deep_gemm_e8m0={self.use_deep_gemm_e8m0}")
             print(f"[DEBUG] is_blackwell={self.is_blackwell}")
+            
+            # Additional debug for E8M0
+            if self.use_deep_gemm_e8m0:
+                tma_m = ((m + 3) // 4) * 4
+                print(f"[DEBUG] TMA aligned M={tma_m}, expected stride=(1, {tma_m})")
             print(f"{'='*80}\n")
             raise
         return output[:m]
