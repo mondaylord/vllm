@@ -312,6 +312,28 @@ class W8A8BlockFp8LinearOp:
         else:
             assert self.deepgemm_input_quant_op is not None
             q_input, input_scale = self.deepgemm_input_quant_op(input_2d)
+        # Pad M to 128 to avoid illegal memory access in DeepGemm
+        m = q_input.shape[0]
+        pad_m = (m + 127) // 128 * 128
+        if pad_m > m:
+            padded_q_input = torch.zeros(
+                (pad_m, q_input.shape[1]),
+                dtype=q_input.dtype,
+                device=q_input.device,
+            )
+            padded_q_input[:m] = q_input
+
+
+            # input_scale shape is [M, C]
+            padded_input_scale = torch.empty(
+                (pad_m, input_scale.shape[1]),
+                dtype=input_scale.dtype,
+                device=input_scale.device,
+            )
+            padded_input_scale[:m] = input_scale
+            q_input = padded_q_input
+            input_scale = padded_input_scale
+
         output = torch.empty(
             (q_input.shape[0], weight.shape[0]),
             dtype=torch.bfloat16,
@@ -320,7 +342,7 @@ class W8A8BlockFp8LinearOp:
         torch.ops.vllm.fp8_gemm_nt_op(
             q_input, input_scale, weight, weight_scale, output, self.use_deep_gemm_e8m0
         )
-        return output
+        return output[:m]
 
     def _run_cutlass(
         self,
