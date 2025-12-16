@@ -323,14 +323,19 @@ class W8A8BlockFp8LinearOp:
             )
             padded_q_input[:m] = q_input
 
-            # input_scale shape is [M, C], typically Column Major [stride (1, M)]
-            # We must preserve this layout for DeepGemm
-            padded_input_scale = torch.zeros(
-                (input_scale.shape[1], pad_m),
+            # input_scale has shape [M, C] with column-major strides (1, M)
+            # We need to pad M while preserving the column-major layout
+            # Create [C, pad_m] tensor, copy data, then permute to get [pad_m, C] with strides (1, pad_m)
+            c = input_scale.shape[1]
+            temp_scale = torch.zeros(
+                (c, pad_m),
                 dtype=input_scale.dtype,
                 device=input_scale.device,
-            ).t()
-            padded_input_scale[:m] = input_scale
+            )
+            # input_scale.t() gives [C, M], copy to temp_scale[:, :m]
+            temp_scale[:, :m] = input_scale.t()
+            # Permute to get [pad_m, C] with column-major strides
+            padded_input_scale = temp_scale.permute(1, 0)
             q_input = padded_q_input
             input_scale = padded_input_scale
 
