@@ -2146,11 +2146,11 @@ class TritonExperts(mk.FusedMoEPermuteExpertsUnpermute):
             raise ValueError(f"Unsupported compute_type: {hidden_states.dtype}")
 
         # Note that the output tensor might be in workspace1
-        intermediate_cache1 = _resize_cache(workspace2, (num_tokens, top_k_num, N))
-        intermediate_cache2 = _resize_cache(
-            workspace13, (num_tokens * top_k_num, N // 2)
-        )
-        intermediate_cache3 = _resize_cache(workspace2, (num_tokens, top_k_num, K))
+        # Note that the output tensor might be in workspace1
+        # Use full workspace to handle padding
+        intermediate_cache1 = workspace2[:, :N]
+        intermediate_cache2 = workspace13[:, :N // 2]
+        intermediate_cache3 = workspace2[:, :K]
 
         sorted_token_ids, expert_ids, num_tokens_post_padded = moe_align_block_size(
             topk_ids, config["BLOCK_SIZE_M"], global_num_experts, expert_map
@@ -2219,7 +2219,10 @@ class TritonExperts(mk.FusedMoEPermuteExpertsUnpermute):
         )
 
         # separate function is required for MoE + LoRA
-        self.moe_sum(intermediate_cache3, output)
+        valid_size = num_tokens * top_k_num
+        self.moe_sum(
+            intermediate_cache3[:valid_size].view(num_tokens, top_k_num, K), output
+        )
 
     def moe_sum(self, input: torch.Tensor, output: torch.Tensor) -> None:
         ops.moe_sum(input, output)
