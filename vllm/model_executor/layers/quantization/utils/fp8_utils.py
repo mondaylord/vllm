@@ -322,22 +322,41 @@ class W8A8BlockFp8LinearOp:
                 device=q_input.device,
             )
             padded_q_input[:m] = q_input
-
-            # input_scale has shape [M, C] with column-major strides (1, M)
-            # We need to pad M while preserving the column-major layout
-            # Create [C, pad_m] tensor, copy data, then permute to get [pad_m, C] with strides (1, pad_m)
-            c = input_scale.shape[1]
-            temp_scale = torch.zeros(
-                (c, pad_m),
-                dtype=input_scale.dtype,
-                device=input_scale.device,
-            )
-            # input_scale.t() gives [C, M], copy to temp_scale[:, :m]
-            temp_scale[:, :m] = input_scale.t()
-            # Permute to get [pad_m, C] with column-major strides
-            padded_input_scale = temp_scale.permute(1, 0)
-            
             q_input = padded_q_input
+            
+            # Pad input_scale based on format
+            if self.use_deep_gemm_e8m0 and self.is_blackwell:
+                # Blackwell: input_scale is int32 packed with TMA-aligned strides
+                # shape: [M, ceil(num_groups/4)], stride: (1, tma_aligned_M)
+                tma_aligned_m = ((m + 3) // 4) * 4
+                tma_aligned_pad_m = ((pad_m + 3) // 4) * 4
+                k_dim = input_scale.shape[1]
+                
+                # Create new tensor with padded TMA-aligned stride
+                padded_input_scale = torch.empty_strided(
+                    (pad_m, k_dim),
+                    (1, tma_aligned_pad_m),
+                    device=input_scale.device,
+                    dtype=input_scale.dtype,
+                )
+                # Copy original data
+                # Need to copy column by column to respect the stride
+                for k in range(k_dim):
+                    padded_input_scale[:m, k] = input_scale[:, k]
+                    # Zero out padding
+                    padded_input_scale[m:, k] = 0
+            else:
+                # Non-Blackwell: input_scale is float32 with column-major strides
+                # shape: [M, C], stride: (1, M)
+                c = input_scale.shape[1]
+                temp_scale = torch.zeros(
+                    (c, pad_m),
+                    dtype=input_scale.dtype,
+                    device=input_scale.device,
+                )
+                temp_scale[:, :m] = input_scale.t()
+                padded_input_scale = temp_scale.permute(1, 0)
+            
             input_scale = padded_input_scale
 
         output = torch.empty(
@@ -361,6 +380,7 @@ class W8A8BlockFp8LinearOp:
             print(f"[DEBUG] weight_scale: shape={weight_scale.shape}, stride={weight_scale.stride()}, dtype={weight_scale.dtype}")
             print(f"[DEBUG] output: shape={output.shape}, dtype={output.dtype}")
             print(f"[DEBUG] use_deep_gemm_e8m0={self.use_deep_gemm_e8m0}")
+            print(f"[DEBUG] is_blackwell={self.is_blackwell}")
             print(f"{'='*80}\n")
             raise
         return output[:m]
