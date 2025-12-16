@@ -316,11 +316,6 @@ class W8A8BlockFp8LinearOp:
         m = q_input.shape[0]
         pad_m = (m + 127) // 128 * 128
         if pad_m > m:
-            print(f"\n{'='*60}")
-            print(f"[DEEPGEMM PADDING] Original M={m}, Padded M={pad_m}")
-            print(f"[BEFORE] q_input.shape={q_input.shape}, stride={q_input.stride()}")
-            print(f"[BEFORE] input_scale.shape={input_scale.shape}, stride={input_scale.stride()}")
-            
             padded_q_input = torch.zeros(
                 (pad_m, q_input.shape[1]),
                 dtype=q_input.dtype,
@@ -342,11 +337,6 @@ class W8A8BlockFp8LinearOp:
             # Permute to get [pad_m, C] with column-major strides
             padded_input_scale = temp_scale.permute(1, 0)
             
-            print(f"[AFTER] padded_q_input.shape={padded_q_input.shape}, stride={padded_q_input.stride()}")
-            print(f"[AFTER] padded_input_scale.shape={padded_input_scale.shape}, stride={padded_input_scale.stride()}")
-            print(f"[INFO] weight.shape={weight.shape}, weight_scale.shape={weight_scale.shape}")
-            print(f"{'='*60}\n")
-            
             q_input = padded_q_input
             input_scale = padded_input_scale
 
@@ -355,11 +345,24 @@ class W8A8BlockFp8LinearOp:
             dtype=torch.bfloat16,
             device=q_input.device,
         )
-        torch.ops.vllm.fp8_gemm_nt_op(
-            q_input, input_scale, weight, weight_scale, output, self.use_deep_gemm_e8m0
-        )
-        # Verify DeepGemm execution immediately
-        torch.cuda.synchronize()
+        
+        try:
+            torch.ops.vllm.fp8_gemm_nt_op(
+                q_input, input_scale, weight, weight_scale, output, self.use_deep_gemm_e8m0
+            )
+            torch.cuda.synchronize()
+        except Exception as e:
+            print(f"\n{'='*80}")
+            print(f"[ERROR] DeepGemm failed with: {e}")
+            print(f"[DEBUG] Original M={m}, Padded M={pad_m if pad_m > m else 'no padding'}")
+            print(f"[DEBUG] q_input: shape={q_input.shape}, stride={q_input.stride()}, dtype={q_input.dtype}")
+            print(f"[DEBUG] input_scale: shape={input_scale.shape}, stride={input_scale.stride()}, dtype={input_scale.dtype}")
+            print(f"[DEBUG] weight: shape={weight.shape}, stride={weight.stride()}, dtype={weight.dtype}")
+            print(f"[DEBUG] weight_scale: shape={weight_scale.shape}, stride={weight_scale.stride()}, dtype={weight_scale.dtype}")
+            print(f"[DEBUG] output: shape={output.shape}, dtype={output.dtype}")
+            print(f"[DEBUG] use_deep_gemm_e8m0={self.use_deep_gemm_e8m0}")
+            print(f"{'='*80}\n")
+            raise
         return output[:m]
 
     def _run_cutlass(
