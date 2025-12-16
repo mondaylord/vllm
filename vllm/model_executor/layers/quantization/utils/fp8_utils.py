@@ -367,6 +367,8 @@ class W8A8BlockFp8LinearOp:
             else:
                 # Non-Blackwell or non-E8M0: input_scale is float32
                 c = input_scale.shape[1]
+                m_actual = input_scale.shape[0]  # Actual M (may be m_orig if TMA-aligned)
+                
                 if self.use_deep_gemm_e8m0:
                     # E8M0 requires TMA-aligned stride
                     tma_aligned_pad_m = ((pad_m + 3) // 4) * 4
@@ -382,7 +384,8 @@ class W8A8BlockFp8LinearOp:
                         dtype=input_scale.dtype,
                         device=input_scale.device,
                     )
-                temp_scale[:, :m] = input_scale.t()
+                # Copy using actual M dimension
+                temp_scale[:, :m_actual] = input_scale.t()
                 padded_input_scale = temp_scale.permute(1, 0)
             
             input_scale = padded_input_scale
